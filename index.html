@@ -78,6 +78,13 @@ const puzzles=[
 ];
 let state={team:'',lock:0,start:null,hints:0,version:VERSION,recActions:[],hoodieSelected:false,brandAnswers:{},incidentAssignments:{},uxAnswers:{},soundOn:true};
 let audioCtx=null;
+// Anonymous gameplay events; never send team names, answers or personal details.
+function trackGameEvent(name, parameters={}){
+  if(typeof window.gtag !== 'function') return;
+  window.gtag('event', name, parameters);
+}
+function elapsedGameSeconds(){return state.start ? Math.max(0,Math.floor((Date.now()-state.start)/1000)) : 0;}
+
 function save(){localStorage.setItem(KEY,JSON.stringify(state))}
 function load(){try{const raw=localStorage.getItem(KEY);if(!raw)return false;const s=JSON.parse(raw);if(s.version!==VERSION)return false;state=s;state.uxAnswers=state.uxAnswers||{};state.soundOn=state.soundOn!==false;return !!state.start}catch{return false}}
 function clearOldVersions(){Object.keys(localStorage).filter(k=>k.startsWith(oldPrefix)&&k!==KEY).forEach(k=>localStorage.removeItem(k))}
@@ -118,7 +125,7 @@ function soundUnlock(){tone(520,0.08,'square',0.04);tone(740,0.1,'square',0.04,0
 function soundFinish(){tone(523,0.13,'sine',0.045);tone(659,0.13,'sine',0.045,0.12);tone(784,0.16,'sine',0.05,0.24);tone(1047,0.28,'sine',0.055,0.38);}
 
 function startGame(team){state={team:(team||'The Website Wizards').trim().slice(0,30),lock:0,start:Date.now(),hints:0,version:VERSION,recActions:[],hoodieSelected:false,brandAnswers:{},incidentAssignments:{},uxAnswers:{},soundOn:true};
-initAudio();save();document.getElementById('start').classList.add('hidden');document.getElementById('finish').classList.add('hidden');document.getElementById('game').classList.remove('hidden');renderPuzzle();renderStatus()}
+initAudio();trackGameEvent('game_started',{total_locks:12});save();document.getElementById('start').classList.add('hidden');document.getElementById('finish').classList.add('hidden');document.getElementById('game').classList.remove('hidden');renderPuzzle();renderStatus()}
 function resumeGame(){if(load()){document.getElementById('start').classList.add('hidden');document.getElementById('finish').classList.add('hidden');document.getElementById('game').classList.remove('hidden');renderPuzzle();renderStatus()}else{const t=document.getElementById('teamName');t.focus();t.setAttribute('aria-describedby','resumeMsg');let m=document.getElementById('resumeMsg');if(!m){m=document.createElement('p');m.id='resumeMsg';m.className='small';m.style.color='var(--warn)';m.textContent='No saved game found on this device yet.';document.getElementById('teamName').parentElement.appendChild(m)}}}
 function setupDebugPuzzle(){
  const answer=document.getElementById('answer');
@@ -347,13 +354,13 @@ function setupIncidentPuzzle(){
  }
  update();
 }
-function showHint(){const box=document.getElementById('hintBox');if(!box.classList.contains('hidden'))return;state.hints++;save();soundHint();box.textContent='💡 '+puzzles[state.lock].hint;box.classList.remove('hidden');}
+function showHint(){const box=document.getElementById('hintBox');if(!box.classList.contains('hidden'))return;state.hints++;save();trackGameEvent('hint_used',{lock_number:state.lock+1});soundHint();box.textContent='💡 '+puzzles[state.lock].hint;box.classList.remove('hidden');}
 async function sha256(text){const data=new TextEncoder().encode(norm(text));const buf=await crypto.subtle.digest('SHA-256',data);return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('')}
 async function checkAnswer(){const input=document.getElementById('answer');const feedback=document.getElementById('feedback');if(!input.value.trim()){feedback.textContent='Type an answer first — your team has got this!';feedback.style.color='var(--warn)';input.focus();return}const digest=await sha256(input.value);const ok=puzzles[state.lock].hashes.includes(digest);if(!ok){feedback.textContent='Not quite — try another approach. You can retry as many times as you need.';feedback.style.color='var(--bad)';soundWrong();return}feedback.textContent='✅ Lock opened!';feedback.style.color='var(--good)';soundCorrect();save();setTimeout(()=>showSuccess(),300)}
-function showSuccess(){const p=puzzles[state.lock];soundUnlock();const area=document.getElementById('puzzleArea');area.innerHTML=`<div class="success" style="padding:24px"><div class="eyebrow">Access granted</div><h2>🔓 ${esc(p.title)} solved!</h2><p><strong>Engineering in the real world:</strong> ${esc(p.explain)}</p><p>🔄 <strong>Swap driver and navigator now.</strong></p><button class="primary" id="nextBtn">Continue to ${state.lock+2<=12?'Lock '+(state.lock+2):'finish'} →</button></div>`;document.getElementById('nextBtn').addEventListener('click',()=>{state.lock++;save();if(state.lock>=12){finish()}else{renderPuzzle();renderStatus();window.scrollTo({top:0,behavior:'smooth'})}});}
+function showSuccess(){const p=puzzles[state.lock];state.trackedLocks=state.trackedLocks||[];if(!state.trackedLocks.includes(state.lock+1)){state.trackedLocks.push(state.lock+1);save();trackGameEvent('lock_completed',{lock_number:state.lock+1,time_elapsed_seconds:elapsedGameSeconds()});}soundUnlock();const area=document.getElementById('puzzleArea');area.innerHTML=`<div class="success" style="padding:24px"><div class="eyebrow">Access granted</div><h2>🔓 ${esc(p.title)} solved!</h2><p><strong>Engineering in the real world:</strong> ${esc(p.explain)}</p><p>🔄 <strong>Swap driver and navigator now.</strong></p><button class="primary" id="nextBtn">Continue to ${state.lock+2<=12?'Lock '+(state.lock+2):'finish'} →</button></div>`;document.getElementById('nextBtn').addEventListener('click',()=>{state.lock++;save();if(state.lock>=12){finish()}else{renderPuzzle();renderStatus();window.scrollTo({top:0,behavior:'smooth'})}});}
 function formatDuration(seconds){const total=Math.max(0,Math.floor(seconds));const m=Math.floor(total/60),s=total%60;return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;}
 function remainingTimeText(){const t=timeNow(); return t.overtime ? '00:00' : t.text;}
-function finish(){soundFinish();document.getElementById('game').classList.add('hidden');document.getElementById('finish').classList.remove('hidden');const t=timeNow();const timeTaken=formatDuration(t.seconds);document.getElementById('finishText').innerHTML=`<strong>${esc(state.team)}</strong>, you found the bugs, decoded the system, fixed the problems and got the new school website live.<br><br><strong>Time Taken:</strong> ${esc(timeTaken)} &nbsp; · &nbsp; <strong>Time Remaining:</strong> ${esc(remainingTimeText())} &nbsp; · &nbsp; <strong>Hints:</strong> ${state.hints}`}
+function finish(){if(!state.gameCompletedTracked){state.gameCompletedTracked=true;save();trackGameEvent('game_completed',{time_taken_seconds:elapsedGameSeconds(),hints_used:state.hints,total_locks:12});}soundFinish();document.getElementById('game').classList.add('hidden');document.getElementById('finish').classList.remove('hidden');const t=timeNow();const timeTaken=formatDuration(t.seconds);document.getElementById('finishText').innerHTML=`<strong>${esc(state.team)}</strong>, you found the bugs, decoded the system, fixed the problems and got the new school website live.<br><br><strong>Time Taken:</strong> ${esc(timeTaken)} &nbsp; · &nbsp; <strong>Time Remaining:</strong> ${esc(remainingTimeText())} &nbsp; · &nbsp; <strong>Hints:</strong> ${state.hints}`}
 setInterval(()=>{if(!document.getElementById('game').classList.contains('hidden')){renderStatus();save()}},1000);
 document.getElementById('startBtn').addEventListener('click',()=>startGame(document.getElementById('teamName').value));
 document.getElementById('soundBtn').addEventListener('click',()=>{state.soundOn=!state.soundOn;save();if(state.soundOn){initAudio();soundCorrect();}renderStatus();});document.getElementById('resumeBtn').addEventListener('click',resumeGame);
